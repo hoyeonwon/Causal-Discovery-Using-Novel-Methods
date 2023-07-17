@@ -7,7 +7,8 @@ n_var <- ncol(subsamp_depre)
 cor_final_sub <- cor(subsamp_depre)
 
 # 2. Regularized partial correlation
-new_pcor_sub <- abs(glasso(cor(subsamp_depre), 0.1, nobs = nrow(subsamp_depre))$wi)
+p_val_sub <- abs(glasso(cor(subsamp_depre), 0.1, nobs = nrow(subsamp_depre))$wi)
+new_pcor_sub <- p_val_sub
 pcor_threshold_sub <- sqrt(log(n_var)/nrow(subsamp_depre))
 # Add more threshold
 new_pcor_sub[new_pcor_sub <= pcor_threshold_sub] <- 0
@@ -32,21 +33,35 @@ binarize_pcor_thres_sub <- new_pcor_sub
 binarize_pcor_thres_sub[new_pcor_sub == 0] <- 0
 binarize_pcor_thres_sub[new_pcor_sub != 0] <- 1
 
+### Partial Cor no thres
+binarize_pcor_nothres_sub <- p_val_sub
+binarize_pcor_nothres_sub[new_pcor_sub == 0] <- 0
+binarize_pcor_nothres_sub[new_pcor_sub != 0] <- 1
+
 final_combined_matrix_thres_sub <- binarize_cor_sub * binarize_pcor_thres_sub
+final_combined_matrix_nothres_sub <- binarize_cor_sub * binarize_pcor_nothres_sub
 
 # Diagonals not important for analysis
 diag(binarize_cor_sub) <- diag(binarize_pcor_thres_sub) <- diag(final_combined_matrix_thres_sub) <- 0
+diag(binarize_pcor_nothres_sub) <- diag(final_combined_matrix_nothres_sub) <- 0
 
-#pdf("subsample_data_plots.pdf")
+pdf("subsample_data_plots.pdf")
 # Visualization
-qgraph(binarize_cor_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
+sub_design <- qgraph(binarize_cor_sub, layout = "groups", sampleSize = nrow(subsamp_depre),
        title = "Correlation Estimates",
        labels = colnames(subsamp_depre)
        )
-qgraph(binarize_pcor_thres_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
-       title = "Regularized Partial Correlation Estimates",
+qgraph(binarize_pcor_thres_sub, layout = sub_design, sampleSize = nrow(subsamp_depre),
+       title = "Regularized Partial Correlation With Threshold",
        labels = colnames(subsamp_depre))
-qgraph(final_combined_matrix_thres_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
-       title = "Hybrid Estimates",
+qgraph(final_combined_matrix_thres_sub, layout = sub_design, sampleSize = nrow(subsamp_depre),
+       title = "Hybrid Estimates With Threshold",
        labels = colnames(subsamp_depre))
-#dev.off()
+qgraph(binarize_pcor_nothres_sub, layout = sub_design, sampleSize = nrow(subsamp_depre),
+       title = "Regularized Partial Correlation Without Threshold",
+       labels = colnames(subsamp_depre))
+qgraph(final_combined_matrix_nothres_sub, layout = sub_design, sampleSize = nrow(subsamp_depre),
+       title = "Hybrid Estimates Without Threshold",
+       labels = colnames(subsamp_depre))
+
+dev.off()
