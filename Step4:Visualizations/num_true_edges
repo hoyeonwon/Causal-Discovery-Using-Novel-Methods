@@ -1,0 +1,11 @@
+# calculate the number of true edges and absence of edges in each true structure type
+
+TN_structureone <- 90 - sum(true_structure_one)
+TN_structuretwo <- 90 - sum(true_structure_two)
+TN_structurethree <- 90 - sum(true_structure_three)
+TN_structurefour <- 90 - sum(true_structure_four)
+
+TP_structureone <- sum(true_structure_one)
+TP_structuretwo <- sum(true_structure_two)
+TP_structurethree <- sum(true_structure_three)
+TP_structurefour <- sum(true_structure_four)
