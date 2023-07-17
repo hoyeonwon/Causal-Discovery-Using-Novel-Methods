@@ -1,0 +1,62 @@
+# Calculate p-values of correlation matrix using Fisher's Z transformation
+## The inputs are correlation matrix and number of observations
+## Use psych pacakge for fisherz
+cor_to_pval <- function(cor_estimates, num_obs) {
+  # Load the psych package
+  library(psych)
+  
+  z_scores <- fisherz(cor_estimates)
+  # p-value calculation with standard normal distribution
+  p_val_cor <- 2*(1-pnorm(sqrt(num_obs-3)*abs(z_scores)))
+  return(p_val_cor)
+}
+
+# Glasso transformation with threshold
+## Inputs are data, number of observations, true structure, and number of variables
+sim_to_glasso <- function(data, num_obs, tr_str, num_var) {
+    # Calculate regularized estimates
+    glasso_pcor <- abs(glasso(cor(data), 0.1, nobs = num_obs)$wi) 
+    # Calculate threshold to reduce occurence of false positives
+    ### sqrt(log(p)/n*s), s = number of true edges, p = number of nodes, n = number of observations
+    glasso_threshold <- sqrt(log(num_var)/num_obs*sum(tr_str))
+    # Re-assign 0s to those that are lower or equal to the threshold
+    glasso_pcor[glasso_pcor <= glasso_threshold] <- 0 
+    
+    return(glasso_pcor)
+}
+
+# Assigning the diagonals of the matrices to 0 as they are not interpretable
+reassign_diagonals_to_zeros <- function(matrix_list) {
+  modified_list <- lapply(matrix_list, function(matrix) {
+    diag(matrix) <- 0
+    return(matrix)
+  })
+  return(modified_list)
+}
+
+# Combining data frames depend on the number of true edges, structure type, evaluation type, and method
+## The defatul argument for method is NULL as the variable name for correlation analysis does not contain 'cor'
+
+combine_data_frames <- function(true_edges, structure_type, evaluation_type, method = NULL) {
+
+  obs <- c("50", "100", "200", "400")
+
+  if (is.null(method)) {
+    Sums = sapply(obs, function(o) sum(get(paste0(structure_type, "_", o))[[evaluation_type]]))
+  } else {
+    Sums = sapply(obs, function(o) sum(get(paste0(structure_type, if (!is.null(method)) paste0("_", method), "_", o))[[evaluation_type]]))
+  }
+  combined <- data.frame(
+    Obs = obs,
+    Sums_updated = if (evaluation_type == "FP" | evaluation_type == "FN") {
+      Sums/(true_edges + Sums)
+    } else if (evaluation_type == "TP" | evaluation_type == "TN") {
+      Sums/true_edges
+    }
+  )
+
+  structure <- paste0("Structure ", structure_type)
+  combined <- transform(combined, Structure = structure)
+
+  return(combined)
+}
