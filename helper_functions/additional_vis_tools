@@ -1,0 +1,22 @@
+# below are example codes used to create example plots for discussion section of the paper
+
+design <- qgraph(true_structure, layout = "groups")
+qgraph(results_pc[[as.character(50)]]$FP, layout = design, labels = colnames(true_structure),
+       title = "Number of Observations = 50", threshold = 0.8)
+qgraph(results_pc[[as.character(100)]]$FP, layout = design, labels = colnames(true_structure),
+        title = "Number of Observations = 100", threshold = 0.8)
+qgraph(results_pc[[as.character(200)]]$FP, layout = design, labels = colnames(true_structure),
+ title = "Number of Observations = 200", threshold = 0.8)
+qgraph(results_pc[[as.character(400)]]$FP, layout = design, labels = colnames(true_structure),
+        title = "Number of Observations = 400", threshold = 0.8)
+
+corPlot(true_structure, main = "True Structure")
+corPlot(results_pc[[as.character(50)]]$FP, labels = colnames(true_structure),
+        main = "FP for Partial Correlation Analysis, n = 50")
+corPlot(results_pc[[as.character(100)]]$FP, labels = colnames(true_structure),
+        main = "FP for Partial Correlation Analysis, n = 100")
+corPlot(results_pc[[as.character(200)]]$FP, labels = colnames(true_structure),
+        main = "FP for Partial Correlation Analysis, n = 200")
+diag(results_pc[[as.character(400)]]$FP) <- 0
+corPlot(results_pc[[as.character(400)]]$FP, labels = colnames(true_structure),
+        main = "FP for Partial Correlation Analysis, n = 400")
