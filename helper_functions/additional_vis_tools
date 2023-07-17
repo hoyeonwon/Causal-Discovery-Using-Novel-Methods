@@ -2,7 +2,7 @@
 
 corPlot(structurefour_PC_400$FP, labels = colnames(true_structure_four),
         main = "FP for Partial Correlation WITH THRESHOLD, n = 400")
-corPlot(structurethree_hybrid_400$FP, labels = colnames(true_structure_four),
+corPlot(structurefour_hybrid_400$FP, labels = colnames(true_structure_four),
         main = "FP for Hybrid Analysis WITH THRESHOLD, n = 400")
 corPlot(structurefour_nothresPC_400$FP, labels = colnames(true_structure_four),
         main = "FP for Partial Correlation WITHOUT THRESHOLD, n = 400")
