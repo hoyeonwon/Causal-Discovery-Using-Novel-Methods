@@ -1,0 +1,52 @@
+# Select sub-samples of the data (n=200)
+subsamp_depre <- sample_n(depression_data, 200)
+n_var <- ncol(subsamp_depre)
+
+# Create the qgraph with the specified groups
+# 1. Normal correlation
+cor_final_sub <- cor(subsamp_depre)
+
+# 2. Regularized partial correlation
+new_pcor_sub <- abs(glasso(cor(subsamp_depre), 0.1, nobs = nrow(subsamp_depre))$wi)
+pcor_threshold_sub <- sqrt(log(n_var)/nrow(subsamp_depre))
+# Add more threshold
+new_pcor_sub[new_pcor_sub <= pcor_threshold_sub] <- 0
+
+# 3. Combined Method
+## Calculate for bonferroni threshold
+n_var = 16
+alpha <- 0.05  # Standard significance level
+bonferroni_threshold <- alpha / choose(n_var, 2)
+  
+z_scores_cor_sub <- fisherz(cor_final_sub)
+final_cor_pval_sub <- 2*(1-pnorm(sqrt(nrow(subsamp_depre)-3)*abs(z_scores_cor_sub)))
+
+## Binarize the matrices
+### Cor
+binarize_cor_sub <- final_cor_pval_sub
+binarize_cor_sub[final_cor_pval_sub > bonferroni_threshold] <- 0
+binarize_cor_sub[final_cor_pval_sub <= bonferroni_threshold] <- 1
+
+### Partial Cor
+binarize_pcor_thres_sub <- new_pcor_sub
+binarize_pcor_thres_sub[new_pcor_sub == 0] <- 0
+binarize_pcor_thres_sub[new_pcor_sub != 0] <- 1
+
+final_combined_matrix_thres_sub <- binarize_cor_sub * binarize_pcor_thres_sub
+
+# Diagonals not important for analysis
+diag(binarize_cor_sub) <- diag(binarize_pcor_thres_sub) <- diag(final_combined_matrix_thres_sub) <- 0
+
+#pdf("subsample_data_plots.pdf")
+# Visualization
+qgraph(binarize_cor_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
+       title = "Correlation Estimates",
+       labels = colnames(subsamp_depre)
+       )
+qgraph(binarize_pcor_thres_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
+       title = "Regularized Partial Correlation Estimates",
+       labels = colnames(subsamp_depre))
+qgraph(final_combined_matrix_thres_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
+       title = "Hybrid Estimates",
+       labels = colnames(subsamp_depre))
+#dev.off()
