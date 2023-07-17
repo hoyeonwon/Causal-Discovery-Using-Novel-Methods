@@ -1,0 +1,94 @@
+library(corpcor)
+library(glasso)
+
+set.seed(123)
+
+results_combined <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    b = coeff * a + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    e = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + rnorm(100, 0, 1)
+    g = coeff * d + rnorm(100, 0, 1)
+    h = coeff * f + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+    j = coeff * g + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2.1: Correlation Estimates
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+
+    # Step 2.2: Regularized Partial Correlation Estimates
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_three, n_variables)
+
+    # Step 3: Binarize the matrices
+    ## Cor
+    corrected_pval_cor <- p_val_cor
+    corrected_pval_cor[p_val_cor > bonferroni_threshold] <- 0
+    corrected_pval_cor[p_val_cor <= bonferroni_threshold] <- 1
+
+    ## Partial Cor
+    corrected_pval_pcor <- glasso_pcor
+    corrected_pval_pcor[glasso_pcor == 0] <- 0
+    corrected_pval_pcor[glasso_pcor != 0] <- 1
+
+    # Step 3: Combine correlation and partial correlation matrices
+    combined_matrix <- corrected_pval_cor * corrected_pval_pcor
+
+    # Step 5: Initialize evaluation matrices
+    FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 6: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- combined_matrix[i, j]
+        true_value <- true_structure_three[i, j]
+
+        if (estimated_value == 1 && true_value == 1) {
+          TP_combined[i, j] <- TP_combined[i, j] + 1
+        } else if (estimated_value == 1 && true_value == 0) {
+          FP_combined[i, j] <- FP_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 1) {
+          FN_combined[i, j] <- FN_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 0) {
+          TN_combined[i, j] <- TN_combined[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_combined <- avg_FP_combined + FP_combined
+    avg_FN_combined <- avg_FN_combined + FN_combined
+    avg_TP_combined <- avg_TP_combined + TP_combined
+    avg_TN_combined <- avg_TN_combined + TN_combined
+  }
+
+  # Store results
+  results_combined[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_combined / n_iterations,
+    "FN" = avg_FN_combined / n_iterations,
+    "TP" = avg_TP_combined / n_iterations,
+    "TN" = avg_TN_combined / n_iterations
+  )
+}
+
+structurethree_hybrid_50 <- reassign_diagonals_to_zeros(results_combined[[as.character(50)]])
+structurethree_hybrid_100 <- reassign_diagonals_to_zeros(results_combined[[as.character(100)]])
+structurethree_hybrid_200 <- reassign_diagonals_to_zeros(results_combined[[as.character(200)]])
+structurethree_hybrid_400 <- reassign_diagonals_to_zeros(results_combined[[as.character(400)]])
