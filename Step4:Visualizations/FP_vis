@@ -1,0 +1,114 @@
+# 1. Correlation estimates
+library(ggplot2)
+library(tidyverse)
+if(!require(devtools)) install.packages("devtools")
+#devtools::install_github("kassambara/ggpubr")
+library(ggpubr)
+
+cor_sums_one_FP <- combine_data_frames(TN_structureone, "structureone", "FP")
+cor_sums_two_FP <- combine_data_frames(TN_structuretwo,"structuretwo", "FP")
+cor_sums_three_FP <- combine_data_frames(TN_structurethree,"structurethree", "FP")
+cor_sums_four_FP <- combine_data_frames(TN_structurefour,"structurefour", "FP")
+cor_sums_FP <- rbind(
+  transform(cor_sums_one_FP, Structure = "Structure One"),
+  transform(cor_sums_two_FP, Structure = "Structure Two"),
+  transform(cor_sums_three_FP, Structure = "Structure Three"),
+  transform(cor_sums_four_FP, Structure = "Structure Four")
+)
+
+# 2. Regularized Partial Correlation estimates
+cor_sums_one_FP_PC <- combine_data_frames(TN_structureone, "structureone", "FP", "PC")
+cor_sums_two_FP_PC <- combine_data_frames(TN_structuretwo, "structuretwo", "FP", "PC")
+cor_sums_three_FP_PC <- combine_data_frames(TN_structurethree, "structurethree", "FP", "PC")
+cor_sums_four_FP_PC <- combine_data_frames(TN_structurefour, "structurefour", "FP", "PC")
+cor_sums_FP_PC <- rbind(
+  transform(cor_sums_one_FP_PC, Structure = "Structure One"),
+  transform(cor_sums_two_FP_PC, Structure = "Structure Two"),
+  transform(cor_sums_three_FP_PC, Structure = "Structure Three"),
+  transform(cor_sums_four_FP_PC, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_FP_PC$Structure <- factor(cor_sums_FP_PC$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# 3. Hybrid estimates
+cor_sums_one_FP_hybrid <- combine_data_frames(TN_structureone, "structureone", "FP", "hybrid")
+cor_sums_two_FP_hybrid <- combine_data_frames(TN_structuretwo, "structuretwo", "FP", "hybrid")
+cor_sums_three_FP_hybrid <- combine_data_frames(TN_structurethree, "structurethree", "FP", "hybrid")
+cor_sums_four_FP_hybrid <- combine_data_frames(TN_structurefour, "structurefour", "FP", "hybrid")
+cor_sums_FP_hybrid <- rbind(
+  transform(cor_sums_one_FP_hybrid, Structure = "Structure One"),
+  transform(cor_sums_two_FP_hybrid, Structure = "Structure Two"),
+  transform(cor_sums_three_FP_hybrid, Structure = "Structure Three"),
+  transform(cor_sums_four_FP_hybrid, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_FP_hybrid$Structure <- factor(cor_sums_FP_hybrid$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# 4. Visualizations
+
+# Plot the line graph for correlation
+cor_sums_FP %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = reorder(Structure, Sums_updated, decreasing = TRUE), 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FP Rates", 
+       title = "Correlation Analyses: FP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+# Plot the line graph for partial correlation
+cor_sums_FP_PC %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FP Rates", 
+       title = "Partial Correlation Analyses: FP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+ # Plot the line graph for hybrid
+cor_sums_FP_hybrid %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FP Rates", 
+       title = "Hybrid Analyses: FP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
