@@ -1,9 +1,10 @@
-# 1. Correlation estimates
 library(ggplot2)
 library(tidyverse)
 if(!require(devtools)) install.packages("devtools")
 #devtools::install_github("kassambara/ggpubr")
 library(ggpubr)
+
+1. Correlation estimates
 
 cor_sums_one_FP <- combine_data_frames(TN_structureone, "structureone", "FP")
 cor_sums_two_FP <- combine_data_frames(TN_structuretwo,"structuretwo", "FP")
@@ -15,6 +16,13 @@ cor_sums_FP <- rbind(
   transform(cor_sums_three_FP, Structure = "Structure Three"),
   transform(cor_sums_four_FP, Structure = "Structure Four")
 )
+
+# Re-level
+cor_sums_FP$Structure <- factor(cor_sums_FP$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
 
 # 2. Regularized Partial Correlation estimates
 cor_sums_one_FP_PC <- combine_data_frames(TN_structureone, "structureone", "FP", "PC")
@@ -59,7 +67,7 @@ cor_sums_FP_hybrid$Structure <- factor(cor_sums_FP_hybrid$Structure,
 # Plot the line graph for correlation
 cor_sums_FP %>%
   ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
-                     color = reorder(Structure, Sums_updated, decreasing = TRUE), 
+                     color = Structure, 
                      group = Structure)) +
   geom_point() +
   geom_line() +
