@@ -1,2 +1,11 @@
 # Causal-Discovery-Using-Novel-Methods
-MSc Behavioural Data Science at University of Amsterdam by Ho Yeon Won. Project on 'Unraveling Causality in Medical Data: A Hybrid Approach using LASSO Regression and Correlation Analysis'
+## Enhancing Causal Discovery in Clinical Data: A Hybrid Approach Using Regularized Partial Correlation and Correlation Analysis
+Author: Ho Yeon Won (12546496) <br />
+MSc Psychology: Behavioural Data Science, University of Amsterdam <br />
+Supervised by Lourens Waldorp <br />
+
+This GitHub repository provides a code that was used for the study of 'Enhancing Causal Discovery in Clinical Data: A Hybrid Approach Using Regularized Partial Correlation and Correlation Analysis.' The steps can be followed by the numbering written in each sub-folders of the repository. Make sure to load `helper_functions/analysis_helper_functions` for all the steps. <br />
+
+<br />
+Abstract:
+Causality is defined as a change in one variable led by a change in a subsequent variable, given that all other events are controlled. Establishing causality, however, poses challenges due to various conditions that must be considered. This study delves into the field of causal discovery with network modeling in clinical studies. Specifically, a hybrid approach using the LASSO (Least Absolute Shrinkage and Selection Operator)-regularized partial correlation and correlation analysis is proposed to improve the edge estimates of the network model. By leveraging the qualities of both methods, this approach addresses the limitations of both methods and attempts to reduce the chance of Type I errors. While correlation analysis seeks to identify connections among all variables within the network, partial correlation analysis aims to uncover relationships while controlling for any intermediate variables. By considering the connections identified in both analyses, the proposed hybrid method can improve the precision of edge estimation in causal networks. The thesis showcases the differences and effectiveness of the three methods (correlation, regularized partial correlation, and the hybrid method) through simulations involving four distinct adjacency structures. The three methods were then applied to clinical depression symptoms data for a real-life application. In short, this thesis aims to further contribute to advancing causal research by proposing a novel method with regularized partial correlation and correlation analyses.
