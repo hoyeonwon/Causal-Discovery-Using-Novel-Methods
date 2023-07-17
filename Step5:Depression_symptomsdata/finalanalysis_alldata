@@ -1,0 +1,79 @@
+#install.packages("dplyr")
+library(dplyr)
+library(glasso)
+library(psych)
+library(qgraph)
+
+real_data <- read.csv(file_directory, header = TRUE)
+#View(real_data)
+
+# Select depressiond data from real data
+depression_data <- real_data[, 1:16]
+n_var = ncol(depression_data)
+
+# Create the qgraph with the specified groups
+# 1. Normal correlation
+cor_final <- cor(depression_data)
+
+# 2. Regularized partial correlation
+pcor_final <- abs(glasso(cor(depression_data), 0.1, nobs = nrow(depression_data))$wi)
+new_pcor <- pcor_final
+pcor_threshold <- sqrt(log(n_var)/nrow(depression_data))
+new_pcor[new_pcor <= pcor_threshold] <- 0 # with threshold
+
+# 3. Combined Method
+## Calculate for bonferroni threshold
+n_var = 16
+alpha <- 0.05  # Standard significance level
+bonferroni_threshold <- alpha / choose(n_var, 2)
+  
+z_scores_cor <- fisherz(cor_final)
+final_cor_pval <- 2*(1-pnorm(sqrt(nrow(depression_data)-3)*abs(z_scores_cor)))
+
+## Binarize the matrices
+### Cor
+binarize_cor <- final_cor_pval
+binarize_cor[final_cor_pval > bonferroni_threshold] <- 0
+binarize_cor[final_cor_pval <= bonferroni_threshold] <- 1
+
+### Partial Cor with threshold
+binarize_pcor_thres <- new_pcor
+binarize_pcor_thres[new_pcor == 0] <- 0
+binarize_pcor_thres[new_pcor != 0] <- 1
+
+### Partial Cor without threshold
+binarize_pcor <- pcor_final
+binarize_pcor[pcor_final == 0] <- 0
+binarize_pcor[pcor_final != 0] <- 1
+
+final_combined_matrix_thres <- binarize_cor * binarize_pcor_thres
+final_combined_matrix_nothres <- binarize_cor * binarize_pcor
+
+# Diagonals not important for analysis
+diag(binarize_cor) <- diag(binarize_pcor_thres) <- diag(final_combined_matrix_thres) <- 0
+diag(binarize_pcor) <- diag(final_combined_matrix_nothres) <- 0
+
+#pdf("real_data_plots.pdf")
+# Visualization
+final_design <- qgraph(binarize_cor, layout = "groups", sampleSize = nrow(depression_data),
+       title = "Correlation Estimates",
+       labels = colnames(depression_data)
+       )
+qgraph(binarize_pcor_thres, layout = final_design, sampleSize = nrow(depression_data),
+       title = "Regularized Partial Correlation Estimates With Threshold",
+       labels = colnames(depression_data))
+qgraph(final_combined_matrix_thres, layout = final_design, sampleSize = nrow(depression_data),
+       title = "Hybrid Estimates With Threshold",
+       labels = colnames(depression_data))
+qgraph(binarize_pcor, layout = final_design, sampleSize = nrow(depression_data),
+       title = "Regularized Partial Correlation Estimates Without Threshold",
+       labels = colnames(depression_data)
+       )
+qgraph(final_combined_matrix_nothres, layout = final_design, sampleSize = nrow(depression_data),
+       title = "Hybrid Estimates Without Threshold",
+       labels = colnames(depression_data))
+#dev.off()
+
+cat("Sum of Connections with Correlation Analysis is", sum(binarize_cor), "\n")
+cat("Sum of Connections with Partial Correlation Analysis with threshold is", sum(binarize_pcor_thres), "\n")
+cat("Sum of Connections with Hybrid Analysis with threshold is", sum(final_combined_matrix_thres), "\n")
