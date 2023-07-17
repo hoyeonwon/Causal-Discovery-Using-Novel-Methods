@@ -1,0 +1,26 @@
+nothresPC_sums_FP_PC <- combine_data_frames(TN_structurefour, "structurefour", "FP", "nothresPC")
+nothreshybrid_sums_FP_PC <- combine_data_frames(TN_structurefour, "structurefour", "FP", "nothreshybrid")
+
+nothres_combined <- rbind(
+  transform(nothresPC_sums_FP_PC, Structure = "PC"),
+  transform(nothreshybrid_sums_FP_PC, Structure = "Hybrid")
+)
+
+# Plot the line graph
+nothres_combined %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FP Rates", 
+       title = "FP Rates of Partial vs. Hybrid Without Thresholding") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
