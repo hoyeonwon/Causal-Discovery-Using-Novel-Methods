@@ -1,0 +1,2210 @@
+---
+title: "Analysis_Combined"
+author: "Ho Yeon Won (12546496)"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options:
+  markdown:
+    wrap: 72
+---
+# Helper functions
+```{r}
+
+# Calculate p-values of correlation matrix using Fisher's Z transformation
+## The inputs are correlation matrix and number of observations
+## Use psych pacakge for fisherz
+cor_to_pval <- function(cor_estimates, num_obs) {
+  # Load the psych package
+  library(psych)
+  
+  z_scores <- fisherz(cor_estimates)
+  # p-value calculation with standard normal distribution
+  p_val_cor <- 2*(1-pnorm(sqrt(num_obs-3)*abs(z_scores)))
+  return(p_val_cor)
+}
+
+# Glasso transformation with threshold
+## Inputs are data, number of observations, true structure, and number of variables
+sim_to_glasso <- function(data, num_obs, tr_str, num_var) {
+    # Calculate regularized estimates
+    glasso_pcor <- abs(glasso(cor(data), 0.1, nobs = num_obs)$wi) 
+    # Calculate threshold to reduce occurence of false positives
+    ### sqrt(log(p)/n*s), s = number of true edges, p = number of nodes, n = number of observations
+    glasso_threshold <- sqrt(log(num_var)/num_obs*sum(tr_str))
+    # Re-assign 0s to those that are lower or equal to the threshold
+    glasso_pcor[glasso_pcor <= glasso_threshold] <- 0 
+    
+    return(glasso_pcor)
+}
+
+# Assigning the diagonals of the matrices to 0 as they are not interpretable
+reassign_diagonals_to_zeros <- function(matrix_list) {
+  modified_list <- lapply(matrix_list, function(matrix) {
+    diag(matrix) <- 0
+    return(matrix)
+  })
+  return(modified_list)
+}
+
+# Combining data frames depend on the number of true edges, structure type, evaluation type, and method
+## The defatul argument for method is NULL as the variable name for correlation analysis does not contain 'cor'
+
+combine_data_frames <- function(true_edges, structure_type, evaluation_type, method = NULL) {
+
+  obs <- c("50", "100", "200", "400")
+
+  if (is.null(method)) {
+    Sums = sapply(obs, function(o) sum(get(paste0(structure_type, "_", o))[[evaluation_type]]))
+  } else {
+    Sums = sapply(obs, function(o) sum(get(paste0(structure_type, if (!is.null(method)) paste0("_", method), "_", o))[[evaluation_type]]))
+  }
+  combined <- data.frame(
+    Obs = obs,
+    Sums_updated = if (evaluation_type == "FP" | evaluation_type == "FN") {
+      Sums/(true_edges + Sums)
+    } else if (evaluation_type == "TP" | evaluation_type == "TN") {
+      Sums/true_edges
+    }
+  )
+
+  structure <- paste0("Structure ", structure_type)
+  combined <- transform(combined, Structure = structure)
+
+  return(combined)
+}
+
+
+```
+
+# Correlation matrix estimates
+## 1. Structure 1
+Many common causes & colliders
+
+```{r}
+library(psych)
+
+set.seed(123)
+
+# Number of iterations
+n_iterations <- 100
+n_obs_values <- c(50, 100, 200, 400)
+coeff <- runif(1, 0.8, 0.9)
+
+# Initialize cumulative evaluation matrices
+n_variables <- 10
+
+# Define true structure to compare with
+true_structure_one <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+# Define the edges in the graph
+edges_one <- c("AB", "AC", "BD", "BE", "CE", "CF", "DG", "EG", "EH", "GI", "GJ", "HJ")
+
+# Populate the adjacency matrix
+for (edge_one in edges_one) {
+  from <- substr(edge_one, 1, 1) # Extract the source node
+  to <- substr(edge_one, 2, 2)   # Extract the destination node
+  true_structure_one[match(from, LETTERS), match(to, LETTERS)] <- 1
+}
+
+# Print the adjacency matrix (True Structure)
+rownames(true_structure_one) <- colnames(true_structure_one) <- c("A", "B", "C", "D", "E", "F", "G", "H", "I", "J")
+
+results <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(n_obs, mean = 0, sd = 1)
+    b = coeff * a + rnorm(n_obs, 0, 1)
+    c = coeff * a + rnorm(n_obs, 0, 1)
+    d = coeff * b + rnorm(n_obs, 0, 1)
+    e = coeff * b + coeff * c + rnorm(n_obs, 0, 1)
+    f = coeff * c + rnorm(n_obs, 0, 1)
+    g = coeff * d + coeff * e + rnorm(n_obs, 0, 1)
+    h = coeff * e + rnorm(n_obs, 0, 1)
+    i = coeff * g + rnorm(n_obs, 0, 1)
+    j = coeff * g + coeff * h + rnorm(n_obs, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Convert simulated data to correlation matrix
+    correlation_matrix <- cor(sim_data, method = "pearson")
+
+    # Step 3: Calculate p-values of correlation matrix using Fisher's Z transformation
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+    
+    # Step 4: Initialize evaluation matrices
+    FP <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 5: Calculate Bonferroni corrected threshold
+    alpha <- 0.05  # Significance level
+    bonferroni_threshold <- alpha / choose(n_variables, 2)
+
+    # Step 6: Count correct/ incorrect nodes based on the true structure
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- p_val_cor[i, j]
+        true_value <- true_structure_one[i, j]
+
+        if ((estimated_value <= bonferroni_threshold) && true_value == 1) {
+          TP[i, j] <- TP[i, j] + 1
+        } else if ((estimated_value <= bonferroni_threshold) && true_value == 0) {
+          FP[i, j] <- FP[i, j] + 1
+        } else if ((estimated_value > bonferroni_threshold) && true_value == 1) {
+          FN[i, j] <- FN[i, j] + 1
+        } else if ((estimated_value > bonferroni_threshold) && true_value == 0) {
+          TN[i, j] <- TN[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP <- avg_FP + FP
+    avg_FN <- avg_FN + FN
+    avg_TP <- avg_TP + TP
+    avg_TN <- avg_TN + TN
+  }
+
+  # Store results
+  results[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP / n_iterations,
+    "FN" = avg_FN / n_iterations,
+    "TP" = avg_TP / n_iterations,
+    "TN" = avg_TN / n_iterations
+  )
+}
+
+structureone_50 <- reassign_diagonals_to_zeros(results[[as.character(50)]])
+structureone_100 <- reassign_diagonals_to_zeros(results[[as.character(100)]])
+structureone_200 <- reassign_diagonals_to_zeros(results[[as.character(200)]])
+structureone_400 <- reassign_diagonals_to_zeros(results[[as.character(400)]])
+
+```
+
+## 2. Structure 2
+Less common causes & colliders
+
+```{r}
+library(psych)
+
+set.seed(123)
+
+# Number of iterations
+n_iterations <- 100
+n_obs_values <- c(50, 100, 200, 400)
+coeff <- runif(1, 0.8, 0.9)
+n_variables <- 10
+
+# Define true structure to compare with
+true_structure_two <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+# Define the edges in the graph
+edges_two <- c("AB", "AC", "BD", "BE", "EG", "EF", "DG", "EG", "GH", "GI", "HJ")
+
+# Populate the adjacency matrix
+for (edge_two in edges_two) {
+  from <- substr(edge_two, 1, 1) # Extract the source node
+  to <- substr(edge_two, 2, 2)   # Extract the destination node
+  true_structure_two[match(from, LETTERS), match(to, LETTERS)] <- 1
+}
+
+# Print the adjacency matrix (True Structure)
+rownames(true_structure_two) <- colnames(true_structure_two) <- c("A", "B", "C", "D", "E", "F", "G", "H", "I", "J")
+
+results <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    b = coeff * a + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    e = coeff * b + rnorm(100, 0, 1)
+    f = coeff * e + rnorm(100, 0, 1)
+    g = coeff * d + coeff * e + rnorm(100, 0, 1)
+    h = coeff * g + rnorm(100, 0, 1)
+    i = coeff * g + rnorm(100, 0, 1)
+    j = coeff * h + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Convert simulated data to correlation matrix
+    correlation_matrix <- cor(sim_data, method = "pearson")
+
+    # Step 3: Calculate p-values of correlation matrix using Fisher's Z transformation
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+    
+    # Step 4: Initialize evaluation matrices
+    FP <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 5: Calculate Bonferroni corrected threshold
+    alpha <- 0.05  # Significance level
+    bonferroni_threshold <- alpha / choose(n_variables, 2)
+
+    # Step 6: Count correct/ incorrect nodes based on the true structure
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- p_val_cor[i, j]
+        true_value <- true_structure_two[i, j]
+
+        if ((estimated_value <= bonferroni_threshold) && true_value == 1) {
+          TP[i, j] <- TP[i, j] + 1
+        } else if ((estimated_value <= bonferroni_threshold) && true_value == 0) {
+          FP[i, j] <- FP[i, j] + 1
+        } else if ((estimated_value > bonferroni_threshold) && true_value == 1) {
+          FN[i, j] <- FN[i, j] + 1
+        } else if ((estimated_value > bonferroni_threshold) && true_value == 0) {
+          TN[i, j] <- TN[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP <- avg_FP + FP
+    avg_FN <- avg_FN + FN
+    avg_TP <- avg_TP + TP
+    avg_TN <- avg_TN + TN
+  }
+
+  # Store results
+  results[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP / n_iterations,
+    "FN" = avg_FN / n_iterations,
+    "TP" = avg_TP / n_iterations,
+    "TN" = avg_TN / n_iterations
+  )
+}
+
+structuretwo_50 <- reassign_diagonals_to_zeros(results[[as.character(50)]])
+structuretwo_100 <- reassign_diagonals_to_zeros(results[[as.character(100)]])
+structuretwo_200 <- reassign_diagonals_to_zeros(results[[as.character(200)]])
+structuretwo_400 <- reassign_diagonals_to_zeros(results[[as.character(400)]])
+
+```
+
+## 3. Structure 3
+Less common causes & no collider
+
+```{r}
+library(psych)
+
+set.seed(123)
+
+# Number of iterations
+n_iterations <- 100
+n_obs_values <- c(50, 100, 200, 400)
+coeff <- runif(1, 0.8, 0.9)
+
+# Initialize cumulative evaluation matrices
+n_variables <- 10
+
+# Define true structure to compare with
+true_structure_three <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+# Define the edges in the graph
+edges_three <- c("AB", "AC", "BD", "BE", "DF", "DG", "FH", "FI", "GJ")
+
+# Populate the adjacency matrix
+for (edge_three in edges_three) {
+  from <- substr(edge_three, 1, 1) # Extract the source node
+  to <- substr(edge_three, 2, 2)   # Extract the destination node
+  true_structure_three[match(from, LETTERS), match(to, LETTERS)] <- 1
+}
+
+# Print the adjacency matrix (True Structure)
+rownames(true_structure_three) <- colnames(true_structure_three) <- c("A", "B", "C", "D", "E", "F", "G", "H", "I", "J")
+
+results <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    b = coeff * a + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    e = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + rnorm(100, 0, 1)
+    g = coeff * d + rnorm(100, 0, 1)
+    h = coeff * f + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+    j = coeff * g + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Convert simulated data to correlation matrix
+    correlation_matrix <- cor(sim_data, use = "pairwise.complete.obs", method = "pearson")
+
+    # Step 3: Calculate p-values of correlation matrix using Fisher's Z transformation
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+    
+    # Step 4: Initialize evaluation matrices
+    FP <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 5: Calculate Bonferroni corrected threshold
+    alpha <- 0.05  # Significance level
+    bonferroni_threshold <- alpha / choose(n_variables, 2)
+
+    # Step 6: Count correct/ incorrect nodes based on the true structure
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- p_val_cor[i, j]
+        true_value <- true_structure_three[i, j]
+
+        if ((estimated_value <= bonferroni_threshold) && true_value == 1) {
+          TP[i, j] <- TP[i, j] + 1
+        } else if ((estimated_value <= bonferroni_threshold) && true_value == 0) {
+          FP[i, j] <- FP[i, j] + 1
+        } else if ((estimated_value > bonferroni_threshold) && true_value == 1) {
+          FN[i, j] <- FN[i, j] + 1
+        } else if ((estimated_value > bonferroni_threshold) && true_value == 0) {
+          TN[i, j] <- TN[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP <- avg_FP + FP
+    avg_FN <- avg_FN + FN
+    avg_TP <- avg_TP + TP
+    avg_TN <- avg_TN + TN
+  }
+
+  # Store results
+  results[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP / n_iterations,
+    "FN" = avg_FN / n_iterations,
+    "TP" = avg_TP / n_iterations,
+    "TN" = avg_TN / n_iterations
+  )
+}
+
+structurethree_50 <- reassign_diagonals_to_zeros(results[[as.character(50)]])
+structurethree_100 <- reassign_diagonals_to_zeros(results[[as.character(100)]])
+structurethree_200 <- reassign_diagonals_to_zeros(results[[as.character(200)]])
+structurethree_400 <- reassign_diagonals_to_zeros(results[[as.character(400)]])
+
+```
+
+## 4. Structure 4
+Lesser common causes & many colliders
+```{r}
+library(psych)
+
+set.seed(123)
+
+# Number of iterations
+n_iterations <- 100
+n_obs_values <- c(50, 100, 200, 400)
+coeff <- runif(1, 0.8, 0.9)
+
+# Initialize cumulative evaluation matrices
+n_variables <- 10
+
+# Define true structure to compare with
+true_structure_four <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+# Define the edges in the graph
+edges_four <- c("AB", "AC", "BD", "EB", "DF", "DG", "HF", "FI", "JG")
+
+# Populate the adjacency matrix
+for (edge_four in edges_four) {
+  from <- substr(edge_four, 1, 1) # Extract the source node
+  to <- substr(edge_four, 2, 2)   # Extract the destination node
+  true_structure_four[match(from, LETTERS), match(to, LETTERS)] <- 1
+}
+
+# Print the adjacency matrix (True Structure)
+rownames(true_structure_four) <- colnames(true_structure_four) <- c("A", "B", "C", "D", "E", "F", "G", "H", "I", "J")
+
+results <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    e = rnorm(100, 0, 1)
+    h = rnorm(100, 0, 1)
+    j = rnorm(100, 0, 1)
+    b = coeff * a + coeff *e + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + coeff * h + rnorm(100, 0, 1)
+    g = coeff * d + coeff * j + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Convert simulated data to correlation matrix
+    correlation_matrix <- cor(sim_data, method = "pearson")
+
+    # Step 3: Calculate p-values of correlation matrix using Fisher's Z transformation
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+    
+    # Step 4: Initialize evaluation matrices
+    FP <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 5: Calculate Bonferroni corrected threshold
+    alpha <- 0.05  # Significance level
+    bonferroni_threshold <- alpha / choose(n_variables, 2)
+
+    # Step 6: Count correct/ incorrect nodes based on the true structure
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- p_val_cor[i, j]
+        true_value <- true_structure_four[i, j]
+
+        if ((estimated_value <= bonferroni_threshold) && true_value == 1) {
+          TP[i, j] <- TP[i, j] + 1
+        } else if ((estimated_value <= bonferroni_threshold) && true_value == 0) {
+          FP[i, j] <- FP[i, j] + 1
+        } else if ((estimated_value > bonferroni_threshold) && true_value == 1) {
+          FN[i, j] <- FN[i, j] + 1
+        } else if ((estimated_value > bonferroni_threshold) && true_value == 0) {
+          TN[i, j] <- TN[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP <- avg_FP + FP
+    avg_FN <- avg_FN + FN
+    avg_TP <- avg_TP + TP
+    avg_TN <- avg_TN + TN
+  }
+
+  # Store results
+  results[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP / n_iterations,
+    "FN" = avg_FN / n_iterations,
+    "TP" = avg_TP / n_iterations,
+    "TN" = avg_TN / n_iterations
+  )
+}
+
+structurefour_50 <- reassign_diagonals_to_zeros(results[[as.character(50)]])
+structurefour_100 <- reassign_diagonals_to_zeros(results[[as.character(100)]])
+structurefour_200 <- reassign_diagonals_to_zeros(results[[as.character(200)]])
+structurefour_400 <- reassign_diagonals_to_zeros(results[[as.character(400)]])
+
+```
+
+
+# Regualrized Partial Correlatioin Estimates
+## 1. Structure 1
+```{r}
+set.seed(123)
+library(corpcor)
+library(ppcor)
+library(glasso)
+
+results_pc <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(n_obs, mean = 0, sd = 1)
+    b = coeff * a + rnorm(n_obs, 0, 1)
+    c = coeff * a + rnorm(n_obs, 0, 1)
+    d = coeff * b + rnorm(n_obs, 0, 1)
+    e = coeff * b + coeff * c + rnorm(n_obs, 0, 1)
+    f = coeff * c + rnorm(n_obs, 0, 1)
+    g = coeff * d + coeff * e + rnorm(n_obs, 0, 1)
+    h = coeff * e + rnorm(n_obs, 0, 1)
+    i = coeff * g + rnorm(n_obs, 0, 1)
+    j = coeff * g + coeff * h + rnorm(n_obs, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Calculate for graphical lasso-regularized partial correlation matrix
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_one, n_variables)
+    
+    # Step 3: Initialize evaluation matrices
+    FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 4: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- glasso_pcor[i, j]
+        true_value <- true_structure_one[i, j]
+
+        if ((estimated_value != 0) && true_value == 1) {
+          TP_pc[i, j] <- TP_pc[i, j] + 1
+        } else if ((estimated_value != 0) && true_value == 0) {
+          FP_pc[i, j] <- FP_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 1) {
+          FN_pc[i, j] <- FN_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 0) {
+          TN_pc[i, j] <- TN_pc[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_pc <- avg_FP_pc + FP_pc
+    avg_FN_pc <- avg_FN_pc + FN_pc
+    avg_TP_pc <- avg_TP_pc + TP_pc
+    avg_TN_pc <- avg_TN_pc + TN_pc
+  }
+
+  # Store results
+  results_pc[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_pc / n_iterations,
+    "FN" = avg_FN_pc / n_iterations,
+    "TP" = avg_TP_pc / n_iterations,
+    "TN" = avg_TN_pc / n_iterations
+  )
+}
+
+structureone_PC_50 <- reassign_diagonals_to_zeros(results_pc[[as.character(50)]])
+structureone_PC_100 <- reassign_diagonals_to_zeros(results_pc[[as.character(100)]])
+structureone_PC_200 <- reassign_diagonals_to_zeros(results_pc[[as.character(200)]])
+structureone_PC_400 <- reassign_diagonals_to_zeros(results_pc[[as.character(400)]])
+
+
+```
+
+## 2. Structure 2
+```{r}
+set.seed(123)
+library(corpcor)
+library(ppcor)
+library(glasso)
+
+results_pc <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    b = coeff * a + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    e = coeff * b + rnorm(100, 0, 1)
+    f = coeff * e + rnorm(100, 0, 1)
+    g = coeff * d + coeff * e + rnorm(100, 0, 1)
+    h = coeff * g + rnorm(100, 0, 1)
+    i = coeff * g + rnorm(100, 0, 1)
+    j = coeff * h + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Calculate for graphical lasso-regularized partial correlation matrix
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_two, n_variables)
+    
+    # Step 3: Initialize evaluation matrices
+    FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 4: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- glasso_pcor[i, j]
+        true_value <- true_structure_two[i, j]
+
+        if ((estimated_value != 0) && true_value == 1) {
+          TP_pc[i, j] <- TP_pc[i, j] + 1
+        } else if ((estimated_value != 0) && true_value == 0) {
+          FP_pc[i, j] <- FP_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 1) {
+          FN_pc[i, j] <- FN_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 0) {
+          TN_pc[i, j] <- TN_pc[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_pc <- avg_FP_pc + FP_pc
+    avg_FN_pc <- avg_FN_pc + FN_pc
+    avg_TP_pc <- avg_TP_pc + TP_pc
+    avg_TN_pc <- avg_TN_pc + TN_pc
+  }
+
+  # Store results
+  results_pc[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_pc / n_iterations,
+    "FN" = avg_FN_pc / n_iterations,
+    "TP" = avg_TP_pc / n_iterations,
+    "TN" = avg_TN_pc / n_iterations
+  )
+}
+
+structuretwo_PC_50 <- reassign_diagonals_to_zeros(results_pc[[as.character(50)]])
+structuretwo_PC_100 <- reassign_diagonals_to_zeros(results_pc[[as.character(100)]])
+structuretwo_PC_200 <- reassign_diagonals_to_zeros(results_pc[[as.character(200)]])
+structuretwo_PC_400 <- reassign_diagonals_to_zeros(results_pc[[as.character(400)]])
+
+```
+
+
+## 3. Sturcture 3
+```{r}
+set.seed(123)
+library(corpcor)
+library(ppcor)
+library(glasso)
+
+results_pc <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    b = coeff * a + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    e = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + rnorm(100, 0, 1)
+    g = coeff * d + rnorm(100, 0, 1)
+    h = coeff * f + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+    j = coeff * g + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Calculate for graphical lasso-regularized partial correlation matrix
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_four, n_variables)
+    
+    # Step 3: Initialize evaluation matrices
+    FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 4: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- glasso_pcor[i, j]
+        true_value <- true_structure_three[i, j]
+
+        if ((estimated_value != 0) && true_value == 1) {
+          TP_pc[i, j] <- TP_pc[i, j] + 1
+        } else if ((estimated_value != 0) && true_value == 0) {
+          FP_pc[i, j] <- FP_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 1) {
+          FN_pc[i, j] <- FN_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 0) {
+          TN_pc[i, j] <- TN_pc[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_pc <- avg_FP_pc + FP_pc
+    avg_FN_pc <- avg_FN_pc + FN_pc
+    avg_TP_pc <- avg_TP_pc + TP_pc
+    avg_TN_pc <- avg_TN_pc + TN_pc
+  }
+
+  # Store results
+  results_pc[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_pc / n_iterations,
+    "FN" = avg_FN_pc / n_iterations,
+    "TP" = avg_TP_pc / n_iterations,
+    "TN" = avg_TN_pc / n_iterations
+  )
+}
+
+structurethree_PC_50 <- reassign_diagonals_to_zeros(results_pc[[as.character(50)]])
+structurethree_PC_100 <- reassign_diagonals_to_zeros(results_pc[[as.character(100)]])
+structurethree_PC_200 <- reassign_diagonals_to_zeros(results_pc[[as.character(200)]])
+structurethree_PC_400 <- reassign_diagonals_to_zeros(results_pc[[as.character(400)]])
+```
+
+## 4. Structure 4
+```{r}
+set.seed(123)
+library(corpcor)
+library(ppcor)
+library(glasso)
+
+results_pc <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    e = rnorm(100, 0, 1)
+    h = rnorm(100, 0, 1)
+    j = rnorm(100, 0, 1)
+    b = coeff * a + coeff *e + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + coeff * h + rnorm(100, 0, 1)
+    g = coeff * d + coeff * j + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Calculate for graphical lasso-regularized partial correlation matrix
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_four, n_variables)
+    
+    # Step 3: Initialize evaluation matrices
+    FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 4: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- glasso_pcor[i, j]
+        true_value <- true_structure_four[i, j]
+
+        if ((estimated_value != 0) && true_value == 1) {
+          TP_pc[i, j] <- TP_pc[i, j] + 1
+        } else if ((estimated_value != 0) && true_value == 0) {
+          FP_pc[i, j] <- FP_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 1) {
+          FN_pc[i, j] <- FN_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 0) {
+          TN_pc[i, j] <- TN_pc[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_pc <- avg_FP_pc + FP_pc
+    avg_FN_pc <- avg_FN_pc + FN_pc
+    avg_TP_pc <- avg_TP_pc + TP_pc
+    avg_TN_pc <- avg_TN_pc + TN_pc
+  }
+
+  # Store results
+  results_pc[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_pc / n_iterations,
+    "FN" = avg_FN_pc / n_iterations,
+    "TP" = avg_TP_pc / n_iterations,
+    "TN" = avg_TN_pc / n_iterations
+  )
+}
+
+structurefour_PC_50 <- reassign_diagonals_to_zeros(results_pc[[as.character(50)]])
+structurefour_PC_100 <- reassign_diagonals_to_zeros(results_pc[[as.character(100)]])
+structurefour_PC_200 <- reassign_diagonals_to_zeros(results_pc[[as.character(200)]])
+structurefour_PC_400 <- reassign_diagonals_to_zeros(results_pc[[as.character(400)]])
+
+```
+
+## 5. Structure 4 without Threshold
+```{r}
+set.seed(123)
+library(corpcor)
+library(ppcor)
+library(glasso)
+
+nothres_results_pc <- list()
+
+for (n_obs in n_obs_values) {
+  
+  avg_FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    e = rnorm(100, 0, 1)
+    h = rnorm(100, 0, 1)
+    j = rnorm(100, 0, 1)
+    b = coeff * a + coeff *e + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + coeff * h + rnorm(100, 0, 1)
+    g = coeff * d + coeff * j + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2: Calculate for graphical lasso-regularized partial correlation matrix
+    glasso_pcor <- abs(glasso(cor(sim_data), 0.1, nobs = n_obs)$wi)
+    
+    # Step 3: Initialize evaluation matrices
+    FP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_pc <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 4: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- glasso_pcor[i, j]
+        true_value <- true_structure_four[i, j]
+
+        if ((estimated_value != 0) && true_value == 1) {
+          TP_pc[i, j] <- TP_pc[i, j] + 1
+        } else if ((estimated_value != 0) && true_value == 0) {
+          FP_pc[i, j] <- FP_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 1) {
+          FN_pc[i, j] <- FN_pc[i, j] + 1
+        } else if ((estimated_value == 0) && true_value == 0) {
+          TN_pc[i, j] <- TN_pc[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_pc <- avg_FP_pc + FP_pc
+    avg_FN_pc <- avg_FN_pc + FN_pc
+    avg_TP_pc <- avg_TP_pc + TP_pc
+    avg_TN_pc <- avg_TN_pc + TN_pc
+  }
+
+  # Store results
+  nothres_results_pc[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_pc / n_iterations,
+    "FN" = avg_FN_pc / n_iterations,
+    "TP" = avg_TP_pc / n_iterations,
+    "TN" = avg_TN_pc / n_iterations
+  )
+}
+
+structurefour_nothresPC_50 <- reassign_diagonals_to_zeros(nothres_results_pc[[as.character(50)]])
+structurefour_nothresPC_100 <- reassign_diagonals_to_zeros(nothres_results_pc[[as.character(100)]])
+structurefour_nothresPC_200 <- reassign_diagonals_to_zeros(nothres_results_pc[[as.character(200)]])
+structurefour_nothresPC_400 <- reassign_diagonals_to_zeros(nothres_results_pc[[as.character(400)]])
+
+```
+
+# Hybrid Estimates
+## 1. Structure 1
+
+```{r}
+library(corpcor)
+library(glasso)
+
+set.seed(123)
+
+results_combined <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Simulate data based on true structure
+    a = rnorm(n_obs, mean = 0, sd = 1)
+    b = coeff * a + rnorm(n_obs, 0, 1)
+    c = coeff * a + rnorm(n_obs, 0, 1)
+    d = coeff * b + rnorm(n_obs, 0, 1)
+    e = coeff * b + coeff * c + rnorm(n_obs, 0, 1)
+    f = coeff * c + rnorm(n_obs, 0, 1)
+    g = coeff * d + coeff * e + rnorm(n_obs, 0, 1)
+    h = coeff * e + rnorm(n_obs, 0, 1)
+    i = coeff * g + rnorm(n_obs, 0, 1)
+    j = coeff * g + coeff * h + rnorm(n_obs, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2.1: Correlation Estimates
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+
+    # Step 2.2: Regularized Partial Correlation Estimates
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_one, n_variables)
+
+    # Step 3: Binarize the matrices
+    ## Cor
+    corrected_pval_cor <- p_val_cor
+    corrected_pval_cor[p_val_cor > bonferroni_threshold] <- 0
+    corrected_pval_cor[p_val_cor <= bonferroni_threshold] <- 1
+
+    ## Partial Cor
+    corrected_pval_pcor <- glasso_pcor
+    corrected_pval_pcor[glasso_pcor == 0] <- 0
+    corrected_pval_pcor[glasso_pcor != 0] <- 1
+
+    # Step 3: Combine correlation and partial correlation matrices
+    combined_matrix <- corrected_pval_cor * corrected_pval_pcor
+
+    # Step 5: Initialize evaluation matrices
+    FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 6: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- combined_matrix[i, j]
+        true_value <- true_structure_one[i, j]
+
+        if (estimated_value == 1 && true_value == 1) {
+          TP_combined[i, j] <- TP_combined[i, j] + 1
+        } else if (estimated_value == 1 && true_value == 0) {
+          FP_combined[i, j] <- FP_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 1) {
+          FN_combined[i, j] <- FN_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 0) {
+          TN_combined[i, j] <- TN_combined[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_combined <- avg_FP_combined + FP_combined
+    avg_FN_combined <- avg_FN_combined + FN_combined
+    avg_TP_combined <- avg_TP_combined + TP_combined
+    avg_TN_combined <- avg_TN_combined + TN_combined
+  }
+
+  # Store results
+  results_combined[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_combined / n_iterations,
+    "FN" = avg_FN_combined / n_iterations,
+    "TP" = avg_TP_combined / n_iterations,
+    "TN" = avg_TN_combined / n_iterations
+  )
+}
+
+structureone_hybrid_50 <- reassign_diagonals_to_zeros(results_combined[[as.character(50)]])
+structureone_hybrid_100 <- reassign_diagonals_to_zeros(results_combined[[as.character(100)]])
+structureone_hybrid_200 <- reassign_diagonals_to_zeros(results_combined[[as.character(200)]])
+structureone_hybrid_400 <- reassign_diagonals_to_zeros(results_combined[[as.character(400)]])
+
+```
+
+## 2. Structure 2
+```{r}
+library(corpcor)
+library(glasso)
+
+set.seed(123)
+
+results_combined <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    b = coeff * a + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    e = coeff * b + rnorm(100, 0, 1)
+    f = coeff * e + rnorm(100, 0, 1)
+    g = coeff * d + coeff * e + rnorm(100, 0, 1)
+    h = coeff * g + rnorm(100, 0, 1)
+    i = coeff * g + rnorm(100, 0, 1)
+    j = coeff * h + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2.1: Correlation Estimates
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+
+    # Step 2.2: Regularized Partial Correlation Estimates
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_two, n_variables)
+
+    # Step 3: Binarize the matrices
+    ## Cor
+    corrected_pval_cor <- p_val_cor
+    corrected_pval_cor[p_val_cor > bonferroni_threshold] <- 0
+    corrected_pval_cor[p_val_cor <= bonferroni_threshold] <- 1
+
+    ## Partial Cor
+    corrected_pval_pcor <- glasso_pcor
+    corrected_pval_pcor[glasso_pcor == 0] <- 0
+    corrected_pval_pcor[glasso_pcor != 0] <- 1
+
+    # Step 3: Combine correlation and partial correlation matrices
+    combined_matrix <- corrected_pval_cor * corrected_pval_pcor
+
+    # Step 5: Initialize evaluation matrices
+    FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 6: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- combined_matrix[i, j]
+        true_value <- true_structure_two[i, j]
+
+        if (estimated_value == 1 && true_value == 1) {
+          TP_combined[i, j] <- TP_combined[i, j] + 1
+        } else if (estimated_value == 1 && true_value == 0) {
+          FP_combined[i, j] <- FP_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 1) {
+          FN_combined[i, j] <- FN_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 0) {
+          TN_combined[i, j] <- TN_combined[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_combined <- avg_FP_combined + FP_combined
+    avg_FN_combined <- avg_FN_combined + FN_combined
+    avg_TP_combined <- avg_TP_combined + TP_combined
+    avg_TN_combined <- avg_TN_combined + TN_combined
+  }
+
+  # Store results
+  results_combined[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_combined / n_iterations,
+    "FN" = avg_FN_combined / n_iterations,
+    "TP" = avg_TP_combined / n_iterations,
+    "TN" = avg_TN_combined / n_iterations
+  )
+}
+
+structuretwo_hybrid_50 <- reassign_diagonals_to_zeros(results_combined[[as.character(50)]])
+structuretwo_hybrid_100 <- reassign_diagonals_to_zeros(results_combined[[as.character(100)]])
+structuretwo_hybrid_200 <- reassign_diagonals_to_zeros(results_combined[[as.character(200)]])
+structuretwo_hybrid_400 <- reassign_diagonals_to_zeros(results_combined[[as.character(400)]])
+
+```
+
+## 3. Structure 3
+```{r}
+library(corpcor)
+library(glasso)
+
+set.seed(123)
+
+results_combined <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    b = coeff * a + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    e = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + rnorm(100, 0, 1)
+    g = coeff * d + rnorm(100, 0, 1)
+    h = coeff * f + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+    j = coeff * g + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2.1: Correlation Estimates
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+
+    # Step 2.2: Regularized Partial Correlation Estimates
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_three, n_variables)
+
+    # Step 3: Binarize the matrices
+    ## Cor
+    corrected_pval_cor <- p_val_cor
+    corrected_pval_cor[p_val_cor > bonferroni_threshold] <- 0
+    corrected_pval_cor[p_val_cor <= bonferroni_threshold] <- 1
+
+    ## Partial Cor
+    corrected_pval_pcor <- glasso_pcor
+    corrected_pval_pcor[glasso_pcor == 0] <- 0
+    corrected_pval_pcor[glasso_pcor != 0] <- 1
+
+    # Step 3: Combine correlation and partial correlation matrices
+    combined_matrix <- corrected_pval_cor * corrected_pval_pcor
+
+    # Step 5: Initialize evaluation matrices
+    FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 6: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- combined_matrix[i, j]
+        true_value <- true_structure_three[i, j]
+
+        if (estimated_value == 1 && true_value == 1) {
+          TP_combined[i, j] <- TP_combined[i, j] + 1
+        } else if (estimated_value == 1 && true_value == 0) {
+          FP_combined[i, j] <- FP_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 1) {
+          FN_combined[i, j] <- FN_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 0) {
+          TN_combined[i, j] <- TN_combined[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_combined <- avg_FP_combined + FP_combined
+    avg_FN_combined <- avg_FN_combined + FN_combined
+    avg_TP_combined <- avg_TP_combined + TP_combined
+    avg_TN_combined <- avg_TN_combined + TN_combined
+  }
+
+  # Store results
+  results_combined[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_combined / n_iterations,
+    "FN" = avg_FN_combined / n_iterations,
+    "TP" = avg_TP_combined / n_iterations,
+    "TN" = avg_TN_combined / n_iterations
+  )
+}
+
+structurethree_hybrid_50 <- reassign_diagonals_to_zeros(results_combined[[as.character(50)]])
+structurethree_hybrid_100 <- reassign_diagonals_to_zeros(results_combined[[as.character(100)]])
+structurethree_hybrid_200 <- reassign_diagonals_to_zeros(results_combined[[as.character(200)]])
+structurethree_hybrid_400 <- reassign_diagonals_to_zeros(results_combined[[as.character(400)]])
+
+```
+
+## 4. Structure 4
+```{r}
+library(corpcor)
+library(glasso)
+
+set.seed(123)
+
+results_combined <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    e = rnorm(100, 0, 1)
+    h = rnorm(100, 0, 1)
+    j = rnorm(100, 0, 1)
+    b = coeff * a + coeff *e + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + coeff * h + rnorm(100, 0, 1)
+    g = coeff * d + coeff * j + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2.1: Correlation Estimates
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+
+    # Step 2.2: Regularized Partial Correlation Estimates
+    glasso_pcor <- sim_to_glasso(sim_data, n_obs, true_structure_four, n_variables)
+
+    # Step 3: Binarize the matrices
+    ## Cor
+    corrected_pval_cor <- p_val_cor
+    corrected_pval_cor[p_val_cor > bonferroni_threshold] <- 0
+    corrected_pval_cor[p_val_cor <= bonferroni_threshold] <- 1
+
+    ## Partial Cor
+    corrected_pval_pcor <- glasso_pcor
+    corrected_pval_pcor[glasso_pcor == 0] <- 0
+    corrected_pval_pcor[glasso_pcor != 0] <- 1
+
+    # Step 3: Combine correlation and partial correlation matrices
+    combined_matrix <- corrected_pval_cor * corrected_pval_pcor
+
+    # Step 5: Initialize evaluation matrices
+    FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 6: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- combined_matrix[i, j]
+        true_value <- true_structure_four[i, j]
+
+        if (estimated_value == 1 && true_value == 1) {
+          TP_combined[i, j] <- TP_combined[i, j] + 1
+        } else if (estimated_value == 1 && true_value == 0) {
+          FP_combined[i, j] <- FP_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 1) {
+          FN_combined[i, j] <- FN_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 0) {
+          TN_combined[i, j] <- TN_combined[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_combined <- avg_FP_combined + FP_combined
+    avg_FN_combined <- avg_FN_combined + FN_combined
+    avg_TP_combined <- avg_TP_combined + TP_combined
+    avg_TN_combined <- avg_TN_combined + TN_combined
+  }
+
+  # Store results
+  results_combined[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_combined / n_iterations,
+    "FN" = avg_FN_combined / n_iterations,
+    "TP" = avg_TP_combined / n_iterations,
+    "TN" = avg_TN_combined / n_iterations
+  )
+}
+
+structurefour_hybrid_50 <- reassign_diagonals_to_zeros(results_combined[[as.character(50)]])
+structurefour_hybrid_100 <- reassign_diagonals_to_zeros(results_combined[[as.character(100)]])
+structurefour_hybrid_200 <- reassign_diagonals_to_zeros(results_combined[[as.character(200)]])
+structurefour_hybrid_400 <- reassign_diagonals_to_zeros(results_combined[[as.character(400)]])
+
+```
+
+## 5. Structure 4 without Threshold
+```{r}
+library(corpcor)
+library(glasso)
+
+set.seed(123)
+
+no_thres_results_combined <- list()
+
+for (n_obs in n_obs_values) {
+  avg_FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+  avg_TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+  for (iteration in 1:n_iterations) {
+
+    # Step 1: Generate a random true structure (adjacency matrix)
+    a = rnorm(100, mean = 0, sd = 1)
+    e = rnorm(100, 0, 1)
+    h = rnorm(100, 0, 1)
+    j = rnorm(100, 0, 1)
+    b = coeff * a + coeff *e + rnorm(100, 0, 1)
+    c = coeff * a + rnorm(100, 0, 1)
+    d = coeff * b + rnorm(100, 0, 1)
+    f = coeff * d + coeff * h + rnorm(100, 0, 1)
+    g = coeff * d + coeff * j + rnorm(100, 0, 1)
+    i = coeff * f + rnorm(100, 0, 1)
+
+    # Combine variables into a matrix
+    sim_data <- cbind(a, b, c, d, e, f, g, h, i, j)
+
+    # Step 2.1: Correlation Estimates
+    p_val_cor <- cor_to_pval(correlation_matrix, n_obs)
+
+    # Step 2.2: Regularized Partial Correlation Estimates
+    glasso_pcor <- abs(glasso(cor(sim_data), 0.1, nobs = n_obs)$wi)
+
+    # Step 3: Binarize the matrices
+    ## Cor
+    corrected_pval_cor <- p_val_cor
+    corrected_pval_cor[p_val_cor > bonferroni_threshold] <- 0
+    corrected_pval_cor[p_val_cor <= bonferroni_threshold] <- 1
+
+    ## Partial Cor
+    corrected_pval_pcor <- glasso_pcor
+    corrected_pval_pcor[glasso_pcor == 0] <- 0
+    corrected_pval_pcor[glasso_pcor != 0] <- 1
+
+    # Step 3: Combine correlation and partial correlation matrices
+    combined_matrix <- corrected_pval_cor * corrected_pval_pcor
+
+    # Step 5: Initialize evaluation matrices
+    FP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    FN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TP_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+    TN_combined <- matrix(0, nrow = n_variables, ncol = n_variables)
+
+    # Step 6: Calculate evaluation matrices
+    for (i in 1:n_variables) {
+      for (j in 1:n_variables) {
+        estimated_value <- combined_matrix[i, j]
+        true_value <- true_structure_four[i, j]
+
+        if (estimated_value == 1 && true_value == 1) {
+          TP_combined[i, j] <- TP_combined[i, j] + 1
+        } else if (estimated_value == 1 && true_value == 0) {
+          FP_combined[i, j] <- FP_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 1) {
+          FN_combined[i, j] <- FN_combined[i, j] + 1
+        } else if (estimated_value == 0 && true_value == 0) {
+          TN_combined[i, j] <- TN_combined[i, j] + 1
+        }
+      }
+    }
+
+    # Accumulate evaluation matrices
+    avg_FP_combined <- avg_FP_combined + FP_combined
+    avg_FN_combined <- avg_FN_combined + FN_combined
+    avg_TP_combined <- avg_TP_combined + TP_combined
+    avg_TN_combined <- avg_TN_combined + TN_combined
+  }
+
+  # Store results
+  no_thres_results_combined[[as.character(n_obs)]] <- list(
+    "FP" = avg_FP_combined / n_iterations,
+    "FN" = avg_FN_combined / n_iterations,
+    "TP" = avg_TP_combined / n_iterations,
+    "TN" = avg_TN_combined / n_iterations
+  )
+}
+
+structurefour_nothreshybrid_50 <- reassign_diagonals_to_zeros(no_thres_results_combined[[as.character(50)]])
+structurefour_nothreshybrid_100 <- reassign_diagonals_to_zeros(no_thres_results_combined[[as.character(100)]])
+structurefour_nothreshybrid_200 <- reassign_diagonals_to_zeros(no_thres_results_combined[[as.character(200)]])
+structurefour_nothreshybrid_400 <- reassign_diagonals_to_zeros(no_thres_results_combined[[as.character(400)]])
+
+```
+
+--------------------
+# Visualization
+
+Calculate the number of true edges and absence of edges
+```{r}
+
+TN_structureone <- 90 - sum(true_structure_one)
+TN_structuretwo <- 90 - sum(true_structure_two)
+TN_structurethree <- 90 - sum(true_structure_three)
+TN_structurefour <- 90 - sum(true_structure_four)
+
+TP_structureone <- sum(true_structure_one)
+TP_structuretwo <- sum(true_structure_two)
+TP_structurethree <- sum(true_structure_three)
+TP_structurefour <- sum(true_structure_four)
+
+```
+
+Graph of average values of evaluation matrices over all four structures & number of observations
+
+## Correlations
+### 1. False positive
+```{r}
+library(ggplot2)
+library(tidyverse)
+if(!require(devtools)) install.packages("devtools")
+#devtools::install_github("kassambara/ggpubr")
+library(ggpubr)
+
+cor_sums_one_FP <- combine_data_frames(TN_structureone, "structureone", "FP")
+cor_sums_two_FP <- combine_data_frames(TN_structuretwo,"structuretwo", "FP")
+cor_sums_three_FP <- combine_data_frames(TN_structurethree,"structurethree", "FP")
+cor_sums_four_FP <- combine_data_frames(TN_structurefour,"structurefour", "FP")
+cor_sums_FP <- rbind(
+  transform(cor_sums_one_FP, Structure = "Structure One"),
+  transform(cor_sums_two_FP, Structure = "Structure Two"),
+  transform(cor_sums_three_FP, Structure = "Structure Three"),
+  transform(cor_sums_four_FP, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_FP$Structure <- factor(cor_sums_FP$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_FP %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FP Rates", 
+       title = "Correlation Analyses: FP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+### 2. True Positive
+
+```{r}
+
+cor_sums_one_TP <- combine_data_frames(TP_structureone, "structureone", "TP")
+cor_sums_two_TP <- combine_data_frames(TP_structuretwo, "structuretwo", "TP")
+cor_sums_three_TP <- combine_data_frames(TP_structurethree, "structurethree", "TP")
+cor_sums_four_TP <- combine_data_frames(TP_structurefour, "structurefour", "TP")
+cor_sums_TP <- rbind(
+  transform(cor_sums_one_TP, Structure = "Structure One"),
+  transform(cor_sums_two_TP, Structure = "Structure Two"),
+  transform(cor_sums_three_TP, Structure = "Structure Three"),
+  transform(cor_sums_four_TP, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_TP$Structure <- factor(cor_sums_TP$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_TP %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "TP Rates", 
+       title = "Correlation Analyses: TP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+### 3. False Negative
+```{r}
+
+cor_sums_one_FN <- combine_data_frames(TP_structureone, "structureone", "FN")
+cor_sums_two_FN <- combine_data_frames(TP_structuretwo, "structuretwo", "FN")
+cor_sums_three_FN <- combine_data_frames(TP_structurethree, "structurethree", "FN")
+cor_sums_four_FN <- combine_data_frames(TP_structurefour, "structurefour", "FN")
+cor_sums_FN <- rbind(
+  transform(cor_sums_one_FN, Structure = "Structure One"),
+  transform(cor_sums_two_FN, Structure = "Structure Two"),
+  transform(cor_sums_three_FN, Structure = "Structure Three"),
+  transform(cor_sums_four_FN, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_FN$Structure <- factor(cor_sums_FN$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_FN %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated, decreasing = TRUE), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FN Rates", 
+       title = "Correlation Analyses: FN Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+```
+
+### 4. True Negative
+````{r}
+
+cor_sums_one_TN <- combine_data_frames(TN_structureone, "structureone", "TN")
+cor_sums_two_TN <- combine_data_frames(TN_structuretwo, "structuretwo", "TN")
+cor_sums_three_TN <- combine_data_frames(TN_structurethree, "structurethree", "TN")
+cor_sums_four_TN <- combine_data_frames(TN_structurefour, "structurefour", "TN")
+
+# Combine the data frames
+cor_sums_TN <- rbind(
+  transform(cor_sums_one_TN, Structure = "Structure One"),
+  transform(cor_sums_two_TN, Structure = "Structure Two"),
+  transform(cor_sums_three_TN, Structure = "Structure Three"),
+  transform(cor_sums_four_TN, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_TN$Structure <- factor(cor_sums_TN$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_TN %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated, decreasing = TRUE), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "TN Rates", 
+       title = "Correlation Analyses: TN Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+## Regularized Partial Correlations
+### 1. False positive
+```{r}
+
+cor_sums_one_FP_PC <- combine_data_frames(TN_structureone, "structureone", "FP", "PC")
+cor_sums_two_FP_PC <- combine_data_frames(TN_structuretwo, "structuretwo", "FP", "PC")
+cor_sums_three_FP_PC <- combine_data_frames(TN_structurethree, "structurethree", "FP", "PC")
+cor_sums_four_FP_PC <- combine_data_frames(TN_structurefour, "structurefour", "FP", "PC")
+cor_sums_FP_PC <- rbind(
+  transform(cor_sums_one_FP_PC, Structure = "Structure One"),
+  transform(cor_sums_two_FP_PC, Structure = "Structure Two"),
+  transform(cor_sums_three_FP_PC, Structure = "Structure Three"),
+  transform(cor_sums_four_FP_PC, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_FP_PC$Structure <- factor(cor_sums_FP_PC$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_FP_PC %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FP Rates", 
+       title = "Partial Correlation Analyses: FP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+### 2. True Positive
+
+```{r}
+
+cor_sums_one_TP_PC <- combine_data_frames(TP_structureone, "structureone", "TP", "PC")
+cor_sums_two_TP_PC <- combine_data_frames(TP_structuretwo, "structuretwo", "TP", "PC")
+cor_sums_three_TP_PC <- combine_data_frames(TP_structurethree, "structurethree", "TP", "PC")
+cor_sums_four_TP_PC <- combine_data_frames(TP_structurefour, "structurefour", "TP", "PC")
+cor_sums_TP_PC <- rbind(
+  transform(cor_sums_one_TP_PC, Structure = "Structure One"),
+  transform(cor_sums_two_TP_PC, Structure = "Structure Two"),
+  transform(cor_sums_three_TP_PC, Structure = "Structure Three"),
+  transform(cor_sums_four_TP_PC, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_TP_PC$Structure <- factor(cor_sums_TP_PC$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+# Plot the line graph
+cor_sums_TP_PC %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure,
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "TP Rates", 
+       title = "Partial Correlation Analyses: TP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+### 3. False Negative
+```{r}
+
+cor_sums_one_FN_PC <- combine_data_frames(TP_structureone, "structureone", "FN", "PC")
+cor_sums_two_FN_PC <- combine_data_frames(TP_structuretwo, "structuretwo", "FN", "PC")
+cor_sums_three_FN_PC <- combine_data_frames(TP_structurethree, "structurethree", "FN", "PC")
+cor_sums_four_FN_PC <- combine_data_frames(TP_structurefour, "structurefour", "FN", "PC")
+cor_sums_FN_PC <- rbind(
+  transform(cor_sums_one_FN_PC, Structure = "Structure One"),
+  transform(cor_sums_two_FN_PC, Structure = "Structure Two"),
+  transform(cor_sums_three_FN_PC, Structure = "Structure Three"),
+  transform(cor_sums_four_FN_PC, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_FN_PC$Structure <- factor(cor_sums_FN_PC$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_FN_PC %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated, decreasing = TRUE), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, .5) +
+  labs(x = "Number of Observations", y = "FN Rates", 
+       title = "Partial Correlation Analyses: FN Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+```
+
+### 4. True Negative
+````{r}
+
+
+cor_sums_one_TN_PC <- combine_data_frames(TN_structureone, "structureone", "TN", "PC")
+cor_sums_two_TN_PC <- combine_data_frames(TN_structuretwo, "structuretwo", "TN", "PC")
+cor_sums_three_TN_PC <- combine_data_frames(TN_structurethree, "structurethree", "TN", "PC")
+cor_sums_four_TN_PC <- combine_data_frames(TN_structurefour, "structurefour", "TN", "PC")
+
+# Combine the data frames
+cor_sums_TN_PC <- rbind(
+  transform(cor_sums_one_TN_PC, Structure = "Structure One"),
+  transform(cor_sums_two_TN_PC, Structure = "Structure Two"),
+  transform(cor_sums_three_TN_PC, Structure = "Structure Three"),
+  transform(cor_sums_four_TN_PC, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_TN_PC$Structure <- factor(cor_sums_TN_PC$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_TN_PC %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated, decreasing = TRUE), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "TN Rates", 
+       title = "Partial Correlation Analyses: TN Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+## Hybrid
+### 1. False positive
+```{r}
+
+cor_sums_one_FP_hybrid <- combine_data_frames(TN_structureone, "structureone", "FP", "hybrid")
+cor_sums_two_FP_hybrid <- combine_data_frames(TN_structuretwo, "structuretwo", "FP", "hybrid")
+cor_sums_three_FP_hybrid <- combine_data_frames(TN_structurethree, "structurethree", "FP", "hybrid")
+cor_sums_four_FP_hybrid <- combine_data_frames(TN_structurefour, "structurefour", "FP", "hybrid")
+cor_sums_FP_hybrid <- rbind(
+  transform(cor_sums_one_FP_hybrid, Structure = "Structure One"),
+  transform(cor_sums_two_FP_hybrid, Structure = "Structure Two"),
+  transform(cor_sums_three_FP_hybrid, Structure = "Structure Three"),
+  transform(cor_sums_four_FP_hybrid, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_FP_hybrid$Structure <- factor(cor_sums_FP_hybrid$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_FP_hybrid %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FP Rates", 
+       title = "Hybrid Analyses: FP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+### 2. True Positive
+
+```{r}
+
+cor_sums_one_TP_hybrid <- combine_data_frames(TP_structureone, "structureone", "TP", "hybrid")
+cor_sums_two_TP_hybrid <- combine_data_frames(TP_structuretwo, "structuretwo", "TP", "hybrid")
+cor_sums_three_TP_hybrid <- combine_data_frames(TP_structurethree, "structurethree", "TP", "hybrid")
+cor_sums_four_TP_hybrid <- combine_data_frames(TP_structurefour, "structurefour", "TP", "hybrid")
+cor_sums_TP_hybrid <- rbind(
+  transform(cor_sums_one_TP_hybrid, Structure = "Structure One"),
+  transform(cor_sums_two_TP_hybrid, Structure = "Structure Two"),
+  transform(cor_sums_three_TP_hybrid, Structure = "Structure Three"),
+  transform(cor_sums_four_TP_hybrid, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_TP_hybrid$Structure <- factor(cor_sums_TP_hybrid$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+# Plot the line graph
+cor_sums_TP_hybrid %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure,
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "TP Rates", 
+       title = "Hybrid Analyses: TP Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+### 3. False Negative
+```{r}
+
+cor_sums_one_FN_hybrid <- combine_data_frames(TP_structureone, "structureone", "FN", "hybrid")
+cor_sums_two_FN_hybrid <- combine_data_frames(TP_structuretwo, "structuretwo", "FN", "hybrid")
+cor_sums_three_FN_hybrid <- combine_data_frames(TP_structurethree, "structurethree", "FN", "hybrid")
+cor_sums_four_FN_hybrid <- combine_data_frames(TP_structurefour, "structurefour", "FN", "hybrid")
+cor_sums_FN_hybrid <- rbind(
+  transform(cor_sums_one_FN_hybrid, Structure = "Structure One"),
+  transform(cor_sums_two_FN_hybrid, Structure = "Structure Two"),
+  transform(cor_sums_three_FN_hybrid, Structure = "Structure Three"),
+  transform(cor_sums_four_FN_hybrid, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_FN_hybrid$Structure <- factor(cor_sums_FN_hybrid$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_FN_hybrid %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated, decreasing = TRUE), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FN Rates", 
+       title = "Hybrid Analyses: FN Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+```
+
+### 4. True Negative
+````{r}
+
+cor_sums_one_TN_hybrid <- combine_data_frames(TN_structureone, "structureone", "TN", "hybrid")
+cor_sums_two_TN_hybrid <- combine_data_frames(TN_structuretwo, "structuretwo", "TN", "hybrid")
+cor_sums_three_TN_hybrid <- combine_data_frames(TN_structurethree, "structurethree", "TN", "hybrid")
+cor_sums_four_TN_hybrid <- combine_data_frames(TN_structurefour, "structurefour", "TN", "hybrid")
+
+# Combine the data frames
+cor_sums_TN_hybrid <- rbind(
+  transform(cor_sums_one_TN_hybrid, Structure = "Structure One"),
+  transform(cor_sums_two_TN_hybrid, Structure = "Structure Two"),
+  transform(cor_sums_three_TN_hybrid, Structure = "Structure Three"),
+  transform(cor_sums_four_TN_hybrid, Structure = "Structure Four")
+)
+
+# Re-level
+cor_sums_TN_hybrid$Structure <- factor(cor_sums_TN_hybrid$Structure,
+                         levels = c("Structure One", 
+                                    "Structure Two", 
+                                    "Structure Three", 
+                                    "Structure Four"))
+
+# Plot the line graph
+cor_sums_TN_hybrid %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated, decreasing = TRUE), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "TN Rates", 
+       title = "Hybrid Analyses: TN Rates Across Diff Numb of Observations") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+
+```
+
+## Without threshold (only Structure Four & FP)
+
+```{r}
+nothresPC_sums_FP_PC <- combine_data_frames(TN_structurefour, "structurefour", "FP", "nothresPC")
+nothreshybrid_sums_FP_PC <- combine_data_frames(TN_structurefour, "structurefour", "FP", "nothreshybrid")
+
+nothres_combined <- rbind(
+  transform(nothresPC_sums_FP_PC, Structure = "PC"),
+  transform(nothreshybrid_sums_FP_PC, Structure = "Hybrid")
+)
+
+# Plot the line graph
+nothres_combined %>%
+  ggplot(aes(x = reorder(Obs, Sums_updated), y = Sums_updated, 
+                     color = Structure, 
+                     group = Structure)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 15, angle = 90, hjust = 0.5),
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15),
+    legend.position = "bottom", legend.box = "horizontal",
+    legend.text = element_text(size = 10)) +
+  ylim(0, 1) +
+  labs(x = "Number of Observations", y = "FP Rates", 
+       title = "FP Rates of Partial vs. Hybrid Without Thresholding") +
+  scale_color_manual(values = c("red", "blue", "green", "orange"),
+                     name = "Structure Type")
+
+```
+### Image Plots for Structure Four with and without thresholds
+```{r}
+# below are example codes used to create example plots for discussion section of the paper
+
+corPlot(structurefour_PC_400$FP, labels = colnames(true_structure_four),
+        main = "FP for Partial Correlation WITH THRESHOLD, n = 400")
+corPlot(structurefour_hybrid_400$FP, labels = colnames(true_structure_four),
+        main = "FP for Hybrid Analysis WITH THRESHOLD, n = 400")
+corPlot(structurefour_nothresPC_400$FP, labels = colnames(true_structure_four),
+        main = "FP for Partial Correlation WITHOUT THRESHOLD, n = 400")
+corPlot(structurefour_nothreshybrid_400$FP, labels = colnames(true_structure_four),
+        main = "FP for Hybrid Analysis WITHOUT THRESHOLD, n = 400")
+```
+
+--------------------------
+# With Real Data (Depression Patient Data)
+
+Load data into the environment
+```{r}
+#install.packages("dplyr")
+library(dplyr)
+library(glasso)
+library(psych)
+library(qgraph)
+
+real_data <- read.csv("/Users/hoyeonwon/Documents/BDS/BDS Master's Thesis/mcnally_data/raw_data.csv", header = TRUE)
+#View(real_data)
+
+# Select depressiond data from real data
+depression_data <- real_data[, 1:16]
+n_var = ncol(depression_data)
+
+# Create the qgraph with the specified groups
+# 1. Normal correlation
+cor_final <- cor(depression_data)
+
+# 2. Regularized partial correlation
+pcor_final <- abs(glasso(cor(depression_data), 0.1, nobs = nrow(depression_data))$wi)
+new_pcor <- pcor_final
+pcor_threshold <- sqrt(log(n_var)/nrow(depression_data))
+new_pcor[new_pcor <= pcor_threshold] <- 0 # with threshold
+
+# 3. Combined Method
+## Calculate for bonferroni threshold
+n_var = 16
+alpha <- 0.05  # Standard significance level
+bonferroni_threshold <- alpha / choose(n_var, 2)
+  
+z_scores_cor <- fisherz(cor_final)
+final_cor_pval <- 2*(1-pnorm(sqrt(nrow(depression_data)-3)*abs(z_scores_cor)))
+
+## Binarize the matrices
+### Cor
+binarize_cor <- final_cor_pval
+binarize_cor[final_cor_pval > bonferroni_threshold] <- 0
+binarize_cor[final_cor_pval <= bonferroni_threshold] <- 1
+
+### Partial Cor with threshold
+binarize_pcor_thres <- new_pcor
+binarize_pcor_thres[new_pcor == 0] <- 0
+binarize_pcor_thres[new_pcor != 0] <- 1
+
+### Partial Cor without threshold
+binarize_pcor <- pcor_final
+binarize_pcor[pcor_final == 0] <- 0
+binarize_pcor[pcor_final != 0] <- 1
+
+final_combined_matrix_thres <- binarize_cor * binarize_pcor_thres
+final_combined_matrix_nothres <- binarize_cor * binarize_pcor
+
+# Diagonals not important for analysis
+diag(binarize_cor) <- diag(binarize_pcor_thres) <- diag(final_combined_matrix_thres) <- 0
+diag(binarize_pcor) <- diag(final_combined_matrix_nothres) <- 0
+
+#pdf("real_data_plots.pdf")
+# Visualization
+final_design <- qgraph(binarize_cor, layout = "groups", sampleSize = nrow(depression_data),
+       title = "Correlation Estimates",
+       labels = colnames(depression_data)
+       )
+qgraph(binarize_pcor_thres, layout = final_design, sampleSize = nrow(depression_data),
+       title = "Regularized Partial Correlation Estimates With Threshold",
+       labels = colnames(depression_data))
+qgraph(final_combined_matrix_thres, layout = final_design, sampleSize = nrow(depression_data),
+       title = "Hybrid Estimates With Threshold",
+       labels = colnames(depression_data))
+qgraph(binarize_pcor, layout = final_design, sampleSize = nrow(depression_data),
+       title = "Regularized Partial Correlation Estimates Without Threshold",
+       labels = colnames(depression_data)
+       )
+qgraph(final_combined_matrix_nothres, layout = final_design, sampleSize = nrow(depression_data),
+       title = "Hybrid Estimates Without Threshold",
+       labels = colnames(depression_data))
+#dev.off()
+
+cat("Sum of Connections with Correlation Analysis is", sum(binarize_cor), "\n")
+cat("Sum of Connections with Partial Correlation Analysis with threshold is", sum(binarize_pcor_thres), "\n")
+cat("Sum of Connections with Hybrid Analysis with threshold is", sum(final_combined_matrix_thres), "\n")
+
+```
+
+# Stability analysis
+Check whether the methods yield the same/ similar results as full data
+Take sub-samples of the data and evaluate the results
+
+```{r}
+# Select sub-samples of the data (n=200)
+subsamp_depre <- sample_n(depression_data, 200)
+n_var <- ncol(subsamp_depre)
+
+# Create the qgraph with the specified groups
+# 1. Normal correlation
+cor_final_sub <- cor(subsamp_depre)
+
+# 2. Regularized partial correlation
+new_pcor_sub <- abs(glasso(cor(subsamp_depre), 0.1, nobs = nrow(subsamp_depre))$wi)
+pcor_threshold_sub <- sqrt(log(n_var)/nrow(subsamp_depre))
+# Add more threshold
+new_pcor_sub[new_pcor_sub <= pcor_threshold_sub] <- 0
+
+# 3. Combined Method
+## Calculate for bonferroni threshold
+n_var = 16
+alpha <- 0.05  # Standard significance level
+bonferroni_threshold <- alpha / choose(n_var, 2)
+  
+z_scores_cor_sub <- fisherz(cor_final_sub)
+final_cor_pval_sub <- 2*(1-pnorm(sqrt(nrow(subsamp_depre)-3)*abs(z_scores_cor_sub)))
+
+## Binarize the matrices
+### Cor
+binarize_cor_sub <- final_cor_pval_sub
+binarize_cor_sub[final_cor_pval_sub > bonferroni_threshold] <- 0
+binarize_cor_sub[final_cor_pval_sub <= bonferroni_threshold] <- 1
+
+### Partial Cor
+binarize_pcor_thres_sub <- new_pcor_sub
+binarize_pcor_thres_sub[new_pcor_sub == 0] <- 0
+binarize_pcor_thres_sub[new_pcor_sub != 0] <- 1
+
+final_combined_matrix_thres_sub <- binarize_cor_sub * binarize_pcor_thres_sub
+
+# Diagonals not important for analysis
+diag(binarize_cor_sub) <- diag(binarize_pcor_thres_sub) <- diag(final_combined_matrix_thres_sub) <- 0
+
+#pdf("subsample_data_plots.pdf")
+# Visualization
+qgraph(binarize_cor_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
+       title = "Correlation Estimates",
+       labels = colnames(subsamp_depre)
+       )
+qgraph(binarize_pcor_thres_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
+       title = "Regularized Partial Correlation Estimates",
+       labels = colnames(subsamp_depre))
+qgraph(final_combined_matrix_thres_sub, layout = "spring", sampleSize = nrow(subsamp_depre),
+       title = "Hybrid Estimates",
+       labels = colnames(subsamp_depre))
+#dev.off()
+
+```
+
+
+
+
+--------------------
+# True Structures Visualization & Adjacency Matrices
+```{r}
+library(qgraph)
+
+pdf(file="truestructure_all.pdf")
+par(mfrow = c(2,2))
+
+ly_one <- qgraph(true_structure_one, layout = "groups", title = "Structure One")
+qgraph(true_structure_two, layout = ly_one, title = "Structure Two")
+qgraph(true_structure_three, layout = ly_one, title = "Structure Three")
+qgraph(true_structure_four, layout = ly_one, title = "Structure Four")
+dev.off()
+
+corPlot(true_structure_one, main = "True Structure One", show.legend = FALSE)
+corPlot(true_structure_two, main = "True Structure Two", show.legend = FALSE)
+corPlot(true_structure_three, main = "True Structure Three", show.legend = FALSE)
+corPlot(true_structure_four, main = "True Structure Four", show.legend = FALSE)
+
+```
+
