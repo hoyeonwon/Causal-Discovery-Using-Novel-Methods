@@ -1,0 +1,15 @@
+library(qgraph)
+
+#pdf(file="truestructure_all.pdf")
+par(mfrow = c(2,2))
+
+ly_one <- qgraph(true_structure_one, layout = "groups", title = "Structure One")
+qgraph(true_structure_two, layout = ly_one, title = "Structure Two")
+qgraph(true_structure_three, layout = ly_one, title = "Structure Three")
+qgraph(true_structure_four, layout = ly_one, title = "Structure Four")
+#dev.off()
+
+corPlot(true_structure_one, main = "True Structure One", show.legend = FALSE)
+corPlot(true_structure_two, main = "True Structure Two", show.legend = FALSE)
+corPlot(true_structure_three, main = "True Structure Three", show.legend = FALSE)
+corPlot(true_structure_four, main = "True Structure Four", show.legend = FALSE)
